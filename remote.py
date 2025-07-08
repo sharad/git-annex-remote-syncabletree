@@ -175,6 +175,49 @@ def handle_getuuid():
     send("UUID 12345678-90ab-cdef-1234-567890abcdef")  # Replace with stable UUID if needed
     send("OK")
 
+
+
+
+def local_annex_has_key(key):
+    """Check if annex knows about this key."""
+    try:
+        subprocess.check_output(
+            ["git", "annex", "find", "--key", key],
+            stderr=subprocess.DEVNULL
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+def import_nonannexed(backend):
+    files = backend.list_all_files_with_keys()
+    imported = 0
+
+    for key, readable_path in files.items():
+        if local_annex_has_key(key):
+            continue
+
+        print(f"Importing: {readable_path} (key={key})")
+        temp_dir = Path(".syncabletree_tmp")
+        temp_dir.mkdir(exist_ok=True)
+        temp_path = temp_dir / os.path.basename(readable_path)
+
+        try:
+            backend.download_file(key, str(temp_path))
+            dest_path = Path(readable_path)
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(temp_path), str(dest_path))
+
+            subprocess.run(["git", "annex", "add", str(dest_path)], check=True)
+            imported += 1
+        except Exception as e:
+            print(f"Error importing {readable_path}: {e}")
+
+    if imported > 0:
+        subprocess.run(["git", "commit", "-m", f"Auto-imported {imported} file(s) from syncabletree remote"], check=True)
+
+    print(f"Imported {imported} new files.")
+
 def main():
     while True:
         line = sys.stdin.readline()
@@ -236,7 +279,11 @@ def main():
             sys.stdout.flush()
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "import-nonannexed":
+        import_nonannexed(backend)
+    else:
+        main()
+
 
 
 
